@@ -27,7 +27,7 @@ $UserName = $env:USERNAME
 $UserTempDir = $env:TEMP
 $StartTimeStamp = Get-Date -Format o | ForEach-Object { $_ -replace ":", "." } # ISO UTC datetime
 $AnalysisTempDir = "$UserTempDir\AnalysisReport_$StartTimeStamp" #Put a subdirectory into the TEMP folder
-$90Days = (get-date).ticks - 77760000000000 #90 days ago, needed for stale users report
+$90Days = (get-date).ticks - 504988992000000000 #90 days ago, needed for stale users report
 
 New-Item -ItemType directory -Path $AnalysisTempDir
 
