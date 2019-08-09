@@ -102,14 +102,14 @@ get-aduser -server $DomainControllerADWS -f * -properties Name, PasswordNeverExp
     $Identity = $_
     If ($_.Enabled -eq $false) { $DisabledUsers += $_ }
     If ($_.PasswordNeverExpires) { $NoNExpiringUsers += $_ }
-    If ($_.LastLogontimestamp -lt $90Days) { $NinetyDayUsers += $_ } #not working, date & time formats off
+    If ($_.LastLogontimestamp -lt $90Days) { $NinetyDayUsers += $_ }
 	If ($_.PasswordNotRequired) { $PasswordNotRequired += $_ }
     if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedAccounts+= $_}   
 }
 
 $DisabledUsers| Select Name | export-csv $AnalysisTempDir\DisabledUsers.csv    
 $NonExpiringUsers| Select Name | export-csv $AnalysisTempDir\NonExpiringUsers.csv    
-$NinetyDayLogon| Select Name | export-csv $AnalysisTempDir\NinetyDayUsers.csv    
+$NinetyDayUsers| Select Name | export-csv $AnalysisTempDir\NinetyDayUsers.csv    
 $PasswordNotRequired| Select Name | export-csv $AnalysisTempDir\PasswordNotRequired.csv    
 $NeverUsedAccounts | Select Name | export-csv $AnalysisTempDir\NeverUsedAccounts.csv
 
@@ -136,12 +136,12 @@ $AllGroups | Select Name,GroupCategory,GroupScope,Description,mail,ManagedBy | e
 # Poll for all DHCP Servers
 Write-host "Enumerating DHCP servers..."
 
-$DhcpSearchBase = "cn=configuration,$RootDN"
+$ConfigurationSearchBase = "cn=configuration,$RootDN"
 
 $DHCPServers = @()
 
-$DhcpSearchBase = "cn=configuration,$RootDN" #direct link into ADSI
-Get-ADObject -SearchBase $DhcpSearchBase -Filter "objectclass -eq 'dhcpclass' -AND Name -ne 'dhcproot'" -properties Name | foreach ($_) {
+$ConfigurationSearchBase = "cn=configuration,$RootDN" #direct link into ADSI
+Get-ADObject -SearchBase $ConfigurationSearchBase -Filter "objectclass -eq 'dhcpclass' -AND Name -ne 'dhcproot'" -properties Name | foreach ($_) {
 	$DHCPServers += $_
 }
 
@@ -152,14 +152,14 @@ Write-host "Enumerating PKI..."
 
 $CertificateAuthorities = @()
 
-Get-ADObject -SearchBase $DhcpSearchBase -Filter "objectclass -eq 'certificationAuthority' " -properties Name | foreach ($_) {
+Get-ADObject -SearchBase $ConfigurationSearchBase  -Filter "objectclass -eq 'certificationAuthority' " -properties Name | foreach ($_) {
 	$CertificateAuthorities += $_
 }
 
 $CertificateAuthorities | select Name | export-csv $AnalysisTempDir\CertificateAuthorities.csv
 
 # Pull all system OS from AD
-Write-host "Enumerating operating systems of computer objects in AD..."
+Write-host "Analyzing computer objects..."
 
 #Workstations
 $WindowsXP = @()
