@@ -6,7 +6,7 @@
 # Revision 20180605 added OS polling
 # Revision 20190718 added progress write-hosts, added Windows 2019 OS check
 # Revision 20190805 added Never Used Accounts detection, fixed UTC time and path for directory creation
-# Revision 20190809 stale user check working, added checks for stale, never logged in, and disabled computers
+# Revision 20190809 stale user check working, added comupter checks for stale, never logged in, and disabled computers
 
 # KNOWN BUGS
 #    On a Windows 2012 R2 DC in a Windows 2003 Functional level domain and forest, GPO analysis does not work
@@ -212,6 +212,6 @@ $Windows2012 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $A
 $Windows2016 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2016.csv
 $Windows2019 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2019.csv
 
-$DisabledComputers | Select Name, Operating System, when created, lastlogon | export-csv $AnalysisTempDir\DisabledComputers.csv
-$NinetyDayComputers | Select Name, Operating System, when created, lastlogon | export-csv $AnalysisTempDir\NinetyDayComputers.csv
-$NeverUsedComputers | Select Name, Operating System, when created, lastlogon | export-csv $AnalysisTempDir\NeverUsedComputers.csv
+$DisabledComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\DisabledComputers.csv
+$NinetyDayComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NinetyDayComputers.csv
+$NeverUsedComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NeverUsedComputers.csv
