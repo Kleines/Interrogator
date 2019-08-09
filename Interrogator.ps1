@@ -1,4 +1,4 @@
-﻿# Interrogator.ps1
+# Interrogator.ps1
 # Pulls auditing information for clients; requires an account that can read all GPOs and a system on their domain
 # Author: Stephen Kleine [kleines2015@gmail.com]
 # Version 1.0 - 20180525
@@ -6,18 +6,17 @@
 # Revision 20180605 added OS polling
 # Revision 20190718 added progress write-hosts, added Windows 2019 OS check
 # Revision 20190805 added Never Used Accounts detection, fixed UTC time and path for directory creation
+# Revision 20190809 stale user check working, added checks for stale, never logged in, and disabled computers
 
 # KNOWN BUGS
 #    On a Windows 2012 R2 DC in a Windows 2003 Functional level domain and forest, GPO analysis does not work
-#        This appears to be from xmldataGPO.LinksTo being an invalid call under PSv4, returning all as FALSE
-
+#        This appears to be from xmldataGPO.LinksTo being an invalid property under PSv4, returning all as FALSE
 
 #Import all the needed modules
 
 Import-Module -Name GroupPolicy, ActiveDirectory -ErrorAction stop
 
 # script variables (useful when logged onto the user's domain)
-
 
 $Root = [ADSI]"LDAP://RootDSE" # Used for multi-domain environments
 $RootDN = $Root.rootDomainNamingContext # pulls the root domain's DN, needed for polling ADSI directly
@@ -32,7 +31,7 @@ $UserName = $env:USERNAME
 $UserTempDir = $env:TEMP
 $StartTimeStamp = Get-Date -Format o | ForEach-Object { $_ -replace ":", "." } # ISO UTC datetime
 $AnalysisTempDir = "$UserTempDir\AnalysisReport_$StartTimeStamp" #Put a subdirectory into the TEMP folder. It'll help.
-$90Days = (get-date).adddays(-90) #90 days ago, needed for stale users report
+$90Days = (get-date).ticks - 77760000000000 #90 days ago, needed for stale users report
 
 New-Item -ItemType directory -Path $AnalysisTempDir
 
@@ -91,7 +90,7 @@ Get-GPOReport -All -Domain $userFQDNdomain -server $DomainController -ReportType
     $AllGPOs | Select Displayname, Description, GPOstatus, CreationTime, ModificationTime, WMIfilter, Owner | export-csv $AnalysisTempDir\AllGPOs.csv
 
 # User Reporting
-Write-host "Analysing useraccounts..."
+Write-host "Analysing user accounts..."
 
 $DisabledUsers = @()
 $NonExpiringUsers = @()
@@ -99,13 +98,13 @@ $NinetyDayUsers = @()
 $PasswordNotRequired = @()
 $NeverUsedAccounts = @()
 
-get-aduser -server $DomainControllerADWS -f * -properties Name, PasswordNeverExpires, PasswordNotRequired, LastLogonDate, Lastlogontimestamp, Enabled | foreach ($_) { 
+get-aduser -server $DomainControllerADWS -f * -properties Name, PasswordNeverExpires, PasswordNotRequired, Lastlogontimestamp, Enabled | foreach ($_) { 
     $Identity = $_
     If ($_.Enabled -eq $false) { $DisabledUsers += $_ }
     If ($_.PasswordNeverExpires) { $NoNExpiringUsers += $_ }
-    If ($_.LastLogonDate -lt $90Days) { $NinetyDayUsers += $_ } #not working, date & time formats off
+    If ($_.LastLogontimestamp -lt $90Days) { $NinetyDayUsers += $_ } #not working, date & time formats off
 	If ($_.PasswordNotRequired) { $PasswordNotRequired += $_ }
-    if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedAccounts+= $_}
+    if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedAccounts+= $_}   
 }
 
 $DisabledUsers| Select Name | export-csv $AnalysisTempDir\DisabledUsers.csv    
@@ -114,7 +113,7 @@ $NinetyDayLogon| Select Name | export-csv $AnalysisTempDir\NinetyDayUsers.csv
 $PasswordNotRequired| Select Name | export-csv $AnalysisTempDir\PasswordNotRequired.csv    
 $NeverUsedAccounts | Select Name | export-csv $AnalysisTempDir\NeverUsedAccounts.csv
 
-# Group amalysis
+# Group analysis
 Write-host "Analyzing groups..."
 
 $AllGroups = @()
@@ -177,7 +176,13 @@ $Windows2019 = @()
 #Miscellaneous
 $UnknownOS = @()
 
-Get-ADComputer -f * -properties Name,OperatingSystem,LastLogon,WhenCreated,OperatingSystemVersion| foreach ($_) {
+# For disabled, unused, and missing systems
+
+$DisabledComputers = @()
+$NinetyDayComputers = @()
+$NeverUsedComputers = @()
+
+Get-ADComputer -f * -properties Name,OperatingSystem,LastLogon,WhenCreated,OperatingSystemVersion,lastlogontimestamp| foreach ($_) {
     switch ($_) {
         {$PSItem.OperatingSystem -like 'Windows Server 2019*'} {$Windows2016 += $_;continue} #more faster
         {$PSItem.OperatingSystem -like 'Windows Server 2016*'} {$Windows2016 += $_;continue} #more faster
@@ -191,6 +196,9 @@ Get-ADComputer -f * -properties Name,OperatingSystem,LastLogon,WhenCreated,Opera
         {$PSItem.OperatingSystem  -like 'Windows XP*'} {$WindowsXP += $_;continue}
         default {$UnknownOS += $_}
     }
+    If ($_.Enabled -eq $false) { $DisabledComputers += $_ }
+    If ($_.LastLogontimestamp -lt $90Days) { $NinetyDayComputers += $_ }
+    if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedComputers+= $_}   
 }
 
 $WindowsXP | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\WindowsXP.csv
@@ -203,3 +211,7 @@ $Windows2008 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $A
 $Windows2012 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2012.csv
 $Windows2016 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2016.csv
 $Windows2019 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2019.csv
+
+$DisabledComputers | Select Name, Operating System, when created, lastlogon | export-csv $AnalysisTempDir\DisabledComputers.csv
+$NinetyDayComputers | Select Name, Operating System, when created, lastlogon | export-csv $AnalysisTempDir\NinetyDayComputers.csv
+$NeverUsedComputers | Select Name, Operating System, when created, lastlogon | export-csv $AnalysisTempDir\NeverUsedComputers.csv
