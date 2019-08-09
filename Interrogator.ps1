@@ -2,11 +2,7 @@
 # Pulls auditing information for clients; requires an account that can read all GPOs and a system on their domain
 # Author: Stephen Kleine [kleines2015@gmail.com]
 # Version 1.0 - 20180525
-# Revision 20180604 added pulling of PKI and DHCP servers from enterprise
-# Revision 20180605 added OS polling
-# Revision 20190718 added progress write-hosts, added Windows 2019 OS check
-# Revision 20190805 added Never Used Accounts detection, fixed UTC time and path for directory creation
-# Revision 20190809 stale user check working, added comupter checks for stale, never logged in, and disabled computers
+# Revision 20190809 - Users and computers checks all working
 
 # KNOWN BUGS
 #    On a Windows 2012 R2 DC in a Windows 2003 Functional level domain and forest, GPO analysis does not work
@@ -30,12 +26,12 @@ $userFQDNdomain = $userDomain.dnsroot
 $UserName = $env:USERNAME
 $UserTempDir = $env:TEMP
 $StartTimeStamp = Get-Date -Format o | ForEach-Object { $_ -replace ":", "." } # ISO UTC datetime
-$AnalysisTempDir = "$UserTempDir\AnalysisReport_$StartTimeStamp" #Put a subdirectory into the TEMP folder. It'll help.
+$AnalysisTempDir = "$UserTempDir\AnalysisReport_$StartTimeStamp" #Put a subdirectory into the TEMP folder
 $90Days = (get-date).ticks - 77760000000000 #90 days ago, needed for stale users report
 
 New-Item -ItemType directory -Path $AnalysisTempDir
 
-#Pull all GPOs and export as XML and HTML - these might be useful for GPO analysis and will take time
+#Pull all GPOs and export as XML and HTML
 
 Write-host "Dumping all GPOs to XML..."
 
@@ -77,6 +73,7 @@ Get-GPOReport -All -Domain $userFQDNdomain -server $DomainController -ReportType
     $noUserConfigs = @()
     $noComputerConfigs = @()
     $AllGPOs = @() 
+
     Get-GPO -All -server $DomainController | ForEach { $gpo = $_ | Get-GPOReport -ReportType xml | ForEach { 
         If(IsNotLinked([xml]$_)){$unlinkedGPOs += $gpo} 
         If(NoUserChanges([xml]$_)){$NoUserConfigs += $gpo} #actually detects user part disabled
