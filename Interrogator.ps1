@@ -6,13 +6,13 @@
 
 # KNOWN BUGS
 #    On a Windows 2012 R2 DC in a Windows 2003 Functional level domain and forest, GPO analysis does not work
-#        This appears to be from xmldataGPO.LinksTo being an invalid property under PSv4, returning all as FALSE
+
 
 #Import all the needed modules
 
 Import-Module -Name GroupPolicy, ActiveDirectory -ErrorAction stop
 
-# script variables (useful when logged onto the user's domain)
+# Script global variables
 
 $Root = [ADSI]"LDAP://RootDSE" # Used for multi-domain environments
 $RootDN = $Root.rootDomainNamingContext # pulls the root domain's DN, needed for polling ADSI directly
@@ -28,6 +28,7 @@ $UserTempDir = $env:TEMP
 $StartTimeStamp = Get-Date -Format o | ForEach-Object { $_ -replace ":", "." } # ISO UTC datetime
 $AnalysisTempDir = "$UserTempDir\AnalysisReport_$StartTimeStamp" #Put a subdirectory into the TEMP folder
 $90Days = (get-date).ticks - 504988992000000000 #90 days ago, needed for stale users report
+$ValidServiceAccounts = @('localSystem','NT AUTHORITY\NetworkService','NT AUTHORITY\LocalService') # used for service detections
 
 New-Item -ItemType directory -Path $AnalysisTempDir
 
@@ -212,3 +213,33 @@ $Windows2019 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,La
 $DisabledComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\DisabledComputers.csv
 $NinetyDayComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NinetyDayComputers.csv
 $NeverUsedComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NeverUsedComputers.csv
+
+# Import modules
+Import-Module -Name ActiveDirectory -ErrorAction stop
+
+# Inspect online system services for default accounts types
+
+Write-Host "Analyzing all systems in AD for service account usage, please be patient..."
+
+$NonLocalServices = @()
+
+$AllComputers = get-adcomputer -filter *
+$ValidServiceAccounts = @('localSystem','NT AUTHORITY\NetworkService','NT AUTHORITY\LocalService')
+Foreach ($system in $AllComputers) {
+    $Services = Get-WmiObject -Class Win32_Service -ComputerName $system.name, not-online -EA SilentlyContinue #silent fails on unreachable machines
+    Foreach ($Servicename in $Services) {
+        $count = 0
+        Foreach ($ValidName in $ValidServiceAccounts) {
+            if ($ServiceName.Startname -ine $ValidName) {$count++}
+            if ($count -eq 3) {
+                $Device = $system.name, $Servicename.DisplayName, $Servicename.StartName, $Servicename.State -join ','
+                $NonLocalServices +=  $Device
+            }
+        }
+    }            
+}
+$NonLocalServices | out-file $AnalysisTempDir\NonLocalServices.csv
+
+
+# Finally, open the folder created waaaaay back in the beginning
+invoke-item $AnalysisTempDir
