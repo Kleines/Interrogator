@@ -3,7 +3,7 @@ This is the development of a powershell script to perform analysis of an Active 
 
 At this time (20190812) it inspects and outputs as CSV files all of the following:
 
-GPOs (also exports as XML)
+GPOs (exports as XML and HTML)
 
 USERS
 
