@@ -43,4 +43,5 @@ OPERATING SYSTEMS
     Windows 2019
     Others
 
-
+SERVICES
+    All services on all systems NOT using localSystem, NT AUTHORITY\NetworkService or NT AUTHORITY\LocalService a credentials
