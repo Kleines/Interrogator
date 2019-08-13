@@ -95,14 +95,16 @@ $NonExpiringUsers = @()
 $NinetyDayUsers = @()
 $PasswordNotRequired = @()
 $NeverUsedAccounts = @()
+$StalePasswords = @()
 
-get-aduser -server $DomainControllerADWS -f * -properties Name, PasswordNeverExpires, PasswordNotRequired, Lastlogontimestamp, Enabled | foreach ($_) { 
+get-aduser -server $DomainControllerADWS -f * -properties Name, PasswordNeverExpires, PasswordNotRequired, Lastlogontimestamp, Enabled, PwdLastSet | foreach ($_) { 
     $Identity = $_
     If ($_.Enabled -eq $false) { $DisabledUsers += $_ }
     If ($_.PasswordNeverExpires) { $NoNExpiringUsers += $_ }
     If ($_.LastLogontimestamp -lt $90Days) { $NinetyDayUsers += $_ }
 	If ($_.PasswordNotRequired) { $PasswordNotRequired += $_ }
-    if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedAccounts+= $_}   
+    if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedAccounts+= $_}
+    If ($_.pwdlastset -lt $90Days) { $StalePasswords += $_ }   
 }
 
 $DisabledUsers| Select Name | export-csv $AnalysisTempDir\DisabledUsers.csv    
@@ -110,6 +112,7 @@ $NonExpiringUsers| Select Name | export-csv $AnalysisTempDir\NonExpiringUsers.cs
 $NinetyDayUsers| Select Name | export-csv $AnalysisTempDir\NinetyDayUsers.csv    
 $PasswordNotRequired| Select Name | export-csv $AnalysisTempDir\PasswordNotRequired.csv    
 $NeverUsedAccounts | Select Name | export-csv $AnalysisTempDir\NeverUsedAccounts.csv
+$StalePasswords | Select Name | export-csv $AnalysisTempDir\Stalepasswords.csv
 
 # Group analysis
 Write-host "Analyzing groups..."
