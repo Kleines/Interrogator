@@ -5,7 +5,9 @@ Upon completion it opens the temporary folder location for your inspection.
 
 At this time (20190812) it inspects and outputs as CSV files all of the following:
 
-GPOs (exports as XML and HTML)
+GPOs
+
+exports as XML and HTML
 
 USER ACCOUNTS
 
@@ -49,3 +51,4 @@ OPERATING SYSTEMS
 SERVICES
 
     All services on all systems NOT using localSystem, NT AUTHORITY\NetworkService or NT AUTHORITY\LocalService a credentials
+    Exports as a separate file non-responsive systems (offline, WMI issues, etc.)
