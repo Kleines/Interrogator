@@ -1,23 +1,26 @@
 # Interrogator
-This is the development of a powershell script to perform analysis of an Active Directory domain for common failures of best practices
+This is the development of a powershell script to perform analysis of an Active Directory domain for common failures of best practices.
+
+Upon completion it opens the temporary folder location for your inspection.
 
 At this time (20190812) it inspects and outputs as CSV files all of the following:
 
 GPOs (exports as XML and HTML)
 
-USERS
+USER ACCOUNTS
 
     Disabled users accounts
     Non-Expiring user accounts
-    Users who haven't logged in within ninety (90) days
-    Users with no password required
-    User accounts that have never been used (as determined by null last logon date)
+    User accounts who haven't logged in within ninety (90) days
+    User accounts who haven't changed passwords in more than ninety (90) days
+    User accounts with no password required
+    Enabled user accounts that have never been used (as determined by null last logon date)
 
 GROUPS
 
-    All
-    Mail-enabled
-    Nested and the subgroups
+    Dumps all groups
+    Mail-enabled groups
+    Nested groups with their subgroups members
     Groups with no members
     
 COMPUTERS
@@ -44,4 +47,5 @@ OPERATING SYSTEMS
     Others
 
 SERVICES
+
     All services on all systems NOT using localSystem, NT AUTHORITY\NetworkService or NT AUTHORITY\LocalService a credentials
