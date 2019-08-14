@@ -2,7 +2,7 @@
 # Pulls auditing information for clients; requires an account that can read all GPOs and a system on their domain
 # Author: Stephen Kleine [kleines2015@gmail.com]
 # Version 1.0 - 20180525
-# Revision 20190809 - Users and computers checks all working
+# Revision 20190814 - Catches offline systems for service checks
 
 # KNOWN BUGS
 #    On a Windows 2012 R2 DC in a Windows 2003 Functional level domain and forest, GPO analysis does not work
@@ -12,7 +12,7 @@
 
 Import-Module -Name GroupPolicy, ActiveDirectory -ErrorAction stop
 
-# Script global variables
+# Global variables
 
 $Root = [ADSI]"LDAP://RootDSE" # Used for multi-domain environments
 $RootDN = $Root.rootDomainNamingContext # pulls the root domain's DN, needed for polling ADSI directly
@@ -225,23 +225,29 @@ Import-Module -Name ActiveDirectory -ErrorAction stop
 Write-Host "Analyzing all systems in AD for service account usage, please be patient..."
 
 $NonLocalServices = @()
+$NonResponsiveSystems = @()
 
 $AllComputers = get-adcomputer -filter *
 $ValidServiceAccounts = @('localSystem','NT AUTHORITY\NetworkService','NT AUTHORITY\LocalService')
 Foreach ($system in $AllComputers) {
-    $Services = Get-WmiObject -Class Win32_Service -ComputerName $system.name, not-online -EA SilentlyContinue #silent fails on unreachable machines
-    Foreach ($Servicename in $Services) {
-        $count = 0
-        Foreach ($ValidName in $ValidServiceAccounts) {
-            if ($ServiceName.Startname -ine $ValidName) {$count++}
-            if ($count -eq 3) {
-                $Device = $system.name, $Servicename.DisplayName, $Servicename.StartName, $Servicename.State -join ','
-                $NonLocalServices +=  $Device
+    try {
+        $Services = Get-WmiObject -Class Win32_Service -ComputerName $system.name -EA Stop
+        Foreach ($Servicename in $Services) {
+            $count = 0
+            Foreach ($ValidName in $ValidServiceAccounts) {
+                if ($ServiceName.Startname -ine $ValidName) {$count++}
+                if ($count -eq 3) {
+                    $Device = $system.name, $Servicename.DisplayName, $Servicename.StartName, $Servicename.State -join ','
+                    $NonLocalServices +=  $Device
+                }
             }
-        }
-    }            
+        }            
+    }
+    catch { $NonResponsiveSystems += $system.Name }
 }
+        
 $NonLocalServices | out-file $AnalysisTempDir\NonLocalServices.csv
+$NonResponsiveSystems | out-file $AnalysisTempDir\NonResponsiveSystems.csv
 
 
 # Finally, open the folder created waaaaay back in the beginning
