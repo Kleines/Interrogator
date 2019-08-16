@@ -3,11 +3,12 @@ This is the development of a powershell script to perform analysis of an Active 
 
 Upon completion it opens the temporary folder location for your inspection.
 
-At this time (20190812) it inspects and outputs as CSV files all of the following:
+At this time (20190816) it inspects and outputs as CSV files all of the following:
 
 GPOs
 
-exports as XML and HTML
+    Exports as XML
+    Export as HTML
 
 USER ACCOUNTS
 
@@ -31,9 +32,13 @@ COMPUTERS
     Computers that haven't haven't logged in within ninety (90) days
     Computer  accounts that have never been used (as determined by null last logon date)
 
-DHCP Servers defined in AD
+DHCP
 
-PKI CAs defined in AD
+    Servers defined in AD
+
+PKI
+
+    CAs defined in AD
 
 OPERATING SYSTEMS
 
