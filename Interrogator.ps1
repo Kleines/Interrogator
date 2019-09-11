@@ -132,7 +132,7 @@ get-adgroup -f * -Properties Name,GroupCategory,GroupScope,Description,member,ma
 $MailEnabledGroups | Select Name,GroupCategory,GroupScope,Description,Mail | export-csv $AnalysisTempDir\MailEnabledGroups.csv
 $EmptyGroups | Select Name,GroupCategory,GroupScope,Description| export-csv $AnalysisTempDir\EmptyGroups.csv
 $NestedGroups| Select Name,GroupCategory,GroupScope,Description,@{l='MemberOf'; e= { ( $_.memberof | % { (Get-ADObject $_).Name }) -join "," }} | export-csv $AnalysisTempDir\NestedGroups.csv -notypeinformation
-$AllGroups | Select Name,GroupCategory,GroupScope,Description,mail,ManagedBy | export-csv $AnalysisTempDir\AllGroups.csv
+$AllGroups | Select Name,GroupCategory,GroupScope,Description,mail,ManagedBy,@{l='MemberOf'; e= { ( $_.member | % { (Get-ADObject $_).Name }) -join "," }} | export-csv $AnalysisTempDir\AllGroups.csv -notypeinformation
 
 # Poll for all DHCP Servers
 Write-host "Enumerating DHCP servers..."
