@@ -1,8 +1,8 @@
-# Interrogator.ps1
+# Interrogator_v2.ps1
 # Pulls auditing information for clients; requires an account that can read all GPOs and a system on their domain
 # Author: Stephen Kleine [kleines2015@gmail.com]
 # Version 1.0 - 20180525
-# Revision 20190814 - Catches offline systems for service checks
+# Revision 20191011 - Major rework to move into functions
 
 # KNOWN BUGS
 #    On a Windows 2012 R2 DC in a Windows 2003 Functional level domain and forest, GPO analysis does not work
@@ -14,15 +14,12 @@ Import-Module -Name GroupPolicy, ActiveDirectory -ErrorAction stop
 
 # Global variables
 
-$Root = [ADSI]"LDAP://RootDSE" # Used for multi-domain environments
-$RootDN = $Root.rootDomainNamingContext # pulls the root domain's DN, needed for polling ADSI directly
+([ADSI]"LDAP://RootDSE").rootDomainNamingContext # pulls the root domain's DN, needed for polling ADSI directly
 $UserLogonServer=$env:LOGONSERVER #this *should* return a DC in the local site, no guarantees though
 $DomainController = $UserLogonServer.trimstart('\\')
 $UserNetBIOSDomain = $env:USERDOMAIN
-$DomainControllerDetect = get-addomaincontroller -discover -service ADWS
-$DomainControllerADWS = $DomainControllerDetect.Name
-$UserDomain = get-addomain
-$userFQDNdomain = $userDomain.dnsroot
+$DomainControllerADWS = (get-addomaincontroller -discover -service ADWS).Name
+$userFQDNdomain = (get-addomain).dnsroot
 $UserName = $env:USERNAME
 $UserTempDir = $env:TEMP
 $StartTimeStamp = Get-Date -Format o | ForEach-Object { $_ -replace ":", "." } # ISO UTC datetime
@@ -44,28 +41,29 @@ Get-GPOReport -All -Domain $userFQDNdomain -server $DomainController -ReportType
 
 # Functions for GPO reporting
 
-    function IsNotLinked($xmldata){ 
-        If ($xmldata.GPO.LinksTo -eq $null) { 
-            Return $true 
-        } 
-        Return $false 
-    } 
- 
-    function NoUserChanges($xmldata){ 
-        If ($xmldata.GPO.User.ExtensionData -eq $null) { 
-            Return $true 
-        } 
-     
-        Return $false 
-    } 
-
-    function NoComputerChanges($xmldata){ 
-    If ($xmldata.GPO.Computer.ExtensionData -eq $null) { 
-        Return $true 
-    } 
-     
+function IsNotLinked($xmldata){ 
+    If ($xmldata.GPO.LinksTo -eq $null) {Return $true}
     Return $false 
 } 
+ 
+function NoUserChanges($xmldata){ 
+    If ($xmldata.GPO.User.ExtensionData -eq $null) {Return $true} 
+    Return $false 
+} 
+
+function NoComputerChanges($xmldata){ 
+    If ($xmldata.GPO.Computer.ExtensionData -eq $null) {Return $true} 
+    Return $false 
+} 
+
+#Function for Group membership exporting
+function GetGroupMembers($GroupName) {
+    $OutputList = @()
+    $MemberList = Get-ADGroupMember -Identity $GroupName -Recursive
+    foreach ($user in $Memberlist) { $Outputlist += $user }
+    $OutputList | Select Name, samAccountName | Export-csv "$AnalysisTempDir\$GroupName.csv"
+}
+
 
 # GPO report mainline
  Write-host "Analyzing GPOs for issues..."
@@ -133,6 +131,11 @@ $MailEnabledGroups | Select Name,GroupCategory,GroupScope,Description,Mail | exp
 $EmptyGroups | Select Name,GroupCategory,GroupScope,Description| export-csv $AnalysisTempDir\EmptyGroups.csv
 $NestedGroups| Select Name,GroupCategory,GroupScope,Description,@{l='MemberOf'; e= { ( $_.memberof | % { (Get-ADObject $_).Name }) -join "," }} | export-csv $AnalysisTempDir\NestedGroups.csv -notypeinformation
 $AllGroups | Select Name,GroupCategory,GroupScope,Description,mail,ManagedBy,@{l='MemberOf'; e= { ( $_.member | % { (Get-ADObject $_).Name }) -join "," }} | export-csv $AnalysisTempDir\AllGroups.csv -notypeinformation
+
+#Get all privilege group members
+GetGroupMembers("Domain Admins")
+GetGroupMembers("Enterprise Admins")
+GetGroupMembers("Schema Admins")
 
 # Poll for all DHCP Servers
 Write-host "Enumerating DHCP servers..."
@@ -217,9 +220,6 @@ $DisabledComputers | Select Name, OperatingSystem, whencreated, lastlogon | expo
 $NinetyDayComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NinetyDayComputers.csv
 $NeverUsedComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NeverUsedComputers.csv
 
-# Import modules
-Import-Module -Name ActiveDirectory -ErrorAction stop
-
 # Inspect online system services for default accounts types
 
 Write-Host "Analyzing all systems in AD for service account usage, please be patient..."
@@ -247,7 +247,7 @@ Foreach ($system in $AllComputers) {
 }
         
 $NonLocalServices | out-file $AnalysisTempDir\NonLocalServices.csv
-$NonResponsiveSystems | out-file $AnalysisTempDir\NonResponsiveSystems.csv
+$NonResponsiveSystems | out-file $AnalysisTempDir\NonResponsiveLocalServiceSystems.csv
 
 
 # Finally, open the folder created waaaaay back in the beginning
