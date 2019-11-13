@@ -3,7 +3,7 @@ This is the development of a powershell script to perform analysis of an Active 
 
 Upon completion it opens the temporary folder location for your inspection.
 
-At this time (20190816) it inspects and outputs as CSV files all of the following:
+At this time (20191113) it inspects and outputs as CSV files all of the following:
 
 GPOs
 
