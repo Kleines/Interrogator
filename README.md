@@ -9,6 +9,10 @@ GPOs
 
     Exports as XML
     Export as HTML
+    Shows if changes made to computer and user halves of a GPO
+    Shows if computer and user halves of a GPO are enabled
+    Shows all places the GPO links to in the AD tree
+    Displays comments    
 
 USER ACCOUNTS
 
@@ -52,9 +56,10 @@ OPERATING SYSTEMS
     Windows 2012
     Windows 2016
     Windows 2019
-    Others
+    Non-Windows, and attempts to determine what OS (badly)
 
 SERVICES
 
     All services on all systems NOT using localSystem, NT AUTHORITY\NetworkService or NT AUTHORITY\LocalService a credentials
-    Exports as a separate file non-responsive systems (offline, WMI issues, etc.)
+    Separate ttab non-responsive systems (offline, WMI issues, etc.) for this function as well
+    NOTE: This piece has been commented out as it's dog-slow.
