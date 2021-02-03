@@ -1,12 +1,12 @@
-# Interrogator_v2.ps1
-# Pulls auditing information for clients; requires an account that can read all GPOs and a system on their domain
+# Interrogator_v3.ps1
+# Pulls auditing information
+#   This is a major rewrite to functionalize and export to a single XLSX rather than individual CSVs
 # Author: Stephen Kleine [kleines2015@gmail.com]
-# Version 1.0 - 20180525
-# Revision 20191011 - Major rework to move into functions
+# Version 2.0 - 20201216
+# Revision  
 
 # KNOWN BUGS
-#    On a Windows 2012 R2 DC in a Windows 2003 Functional level domain and forest, GPO analysis does not work
-
+#   Creating new worksheets within a function doesn't work.
 
 #Import all the needed modules
 
@@ -16,210 +16,484 @@ Import-Module -Name GroupPolicy, ActiveDirectory -ErrorAction stop
 
 $Root = [ADSI]"LDAP://RootDSE" # Used for multi-domain environments
 $RootDN = $Root.rootDomainNamingContext # pulls the root domain's DN, needed for polling ADSI directly
-$UserLogonServer=$env:LOGONSERVER #this *should* return a DC in the local site, no guarantees though
-$DomainController = $UserLogonServer.trimstart('\\')
-$UserNetBIOSDomain = $env:USERDOMAIN
+$ConfigurationSearchBase = "cn=configuration,$RootDN"
 $DomainControllerADWS = (get-addomaincontroller -discover -service ADWS).Name
-$userFQDNdomain = (get-addomain).dnsroot
 $UserName = $env:USERNAME
 $UserTempDir = $env:TEMP
-$StartTimeStamp = Get-Date -Format o | ForEach-Object { $_ -replace ":", "." } # ISO UTC datetime
+$StartTimeStamp = get-date -f FileDateTime
 $AnalysisTempDir = "$UserTempDir\AnalysisReport_$StartTimeStamp" #Put a subdirectory into the TEMP folder
 $90Days = (get-date).ticks - 504988992000000000 #90 days ago, needed for stale users report
 $ValidServiceAccounts = @('localSystem','NT AUTHORITY\NetworkService','NT AUTHORITY\LocalService') # used for service detections
+[int]$WorksheetIndex = 1  
 
-New-Item -ItemType directory -Path $AnalysisTempDir
+function BuildHeaders($WorksheetVariableName, $Column, $Header){ #Writes your headers
+    $WorksheetVariableName.Cells.Item(1,$Column) = $Header
+}
+function RenameWorksheet($WorksheetVariableName,$TabName) { $WorksheetVariableName.Name = $TabName}
+
+function FillNewRow ($Row,$Column,$Value) { $excel.cells.item($Row,$Column) = "$Value" }
+
+Function CleanupAndClose {
+    $excel.workbooks.close()
+    $excel.Quit()
+    $excel = $Workbook = $uregwksht = $null
+    remove-item $AnalysisTempDir -Recurse -Force
+    [System.GC]::Collect()
+}
+
+Function ChangeWorksheet ($Name) {
+    $Worksheet = $Workbook.Worksheets.item("$Name")
+    $Worksheet.Activate()
+}
+
+#Prepartion for Excel build
+mkdir $AnalysisTempDir -ea Stop -wa stop | out-null # Path to temp directory and create folder
+
+#Build Workbook
+Add-Type -AssemblyName Microsoft.Office.Interop.Excel
+$xlFixedFormat = [Microsoft.Office.Interop.Excel.XlFileFormat]::xlWorkbookDefault
+$excel = New-Object -ComObject excel.application
+$Workbook = $excel.Workbooks.Add()
+#$excel.visible = $True # for debug only, will slow the processing markedly and cause errors
 
 #Pull all GPOs and export as XML and HTML
 
-Write-host "Dumping all GPOs to XML..."
+Write-host "Dumping GPOs..."
+#This builds new worksheets - functionizing doesn't work?
+$uregwksht= $workbook.Worksheets.Item($WorksheetIndex)
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'GPOs' $WorksheetIndex
+BuildHeaders $uregwksht 1 'DisplayName'
+BuildHeaders $uregwksht 2 'GUID' 
+BuildHeaders $uregwksht 3 'Description' 
+BuildHeaders $uregwksht 4 'ComputerChanges'
+BuildHeaders $uregwksht 5 'ComputerActive'
+BuildHeaders $uregwksht 6 'User Changes'
+BuildHeaders $uregwksht 7 'User Active'
+BuildHeaders $uregwksht 8 'LinksTo'
+$i=2
 
-Get-GPOReport -All -Domain $userFQDNdomain -server $DomainController -ReportType xml -path $AnalysisTempDir\GPOReport.xml
-
-Write-host "Dumping all GPOs to HTML..."
-
-Get-GPOReport -All -Domain $userFQDNdomain -server $DomainController -ReportType html -path $AnalysisTempDir\GPOReport.html
-
-# Functions for GPO reporting
-
-function IsNotLinked($xmldata){ 
-    If ($xmldata.GPO.LinksTo -eq $null) {Return $true}
-    Return $false 
-} 
- 
-function NoUserChanges($xmldata){ 
-    If ($xmldata.GPO.User.ExtensionData -eq $null) {Return $true} 
-    Return $false 
-} 
-
-function NoComputerChanges($xmldata){ 
-    If ($xmldata.GPO.Computer.ExtensionData -eq $null) {Return $true} 
-    Return $false 
-} 
-
-#Function for Group membership exporting
-function GetGroupMembers($GroupName) {
-    $OutputList = @()
-    $MemberList = Get-ADGroupMember -Identity $GroupName -Recursive
-    foreach ($user in $Memberlist) { $Outputlist += $user }
-    $OutputList | Select Name, samAccountName | Export-csv "$AnalysisTempDir\$GroupName.csv"
-}
-
-
-# GPO report mainline
- Write-host "Analyzing GPOs for issues..."
-
-    $unlinkedGPOs = @()
-    $noUserConfigs = @()
-    $noComputerConfigs = @()
-    $AllGPOs = @() 
-
-    Get-GPO -All -server $DomainController | ForEach { $gpo = $_ | Get-GPOReport -ReportType xml | ForEach { 
-        If(IsNotLinked([xml]$_)){$unlinkedGPOs += $gpo} 
-        If(NoUserChanges([xml]$_)){$NoUserConfigs += $gpo} #actually detects user part disabled
-        If(NoComputerChanges([xml]$_)){$NoComputerConfigs += $gpo} } #actually detects computer part disabled
-        $AllGPOs += $_
+# mainline
+$AllGPOs = get-gpo -All 
+Foreach ($Policy in $AllGPOs) {
+    $ID = $Policy.id
+    Get-GPOReport -Guid $Policy.id -ReportType XML | out-file -filepath $AnalysisTempDir\$ID.xml -Encoding utf8 #Did it this way because special characters in a GPO's name cause problems with writing to disk
+    [XML]$GPOFile = Get-Content "$AnalysisTempDir\$ID.xml"
+    foreach ($item in $GPOfile.GPO) { 
+        if ($null -eq $item.computer.ExtensionData.IsEmpty) {$ComputerChanges = $false} else {$ComputerChanges = $true}
+        if ($null -eq $item.user.ExtensionData.IsEmpty) {$UserChanges = $false} else {$UserChanges = $true}
+        $ComputerStatus = $item.computer.Enabled
+        $UserStatus = $item.user.Enabled
+        $LinksFound = $item.LinksTo
+        FillNewRow $i 1 $Policy.DisplayName
+        FillNewRow $i 2 $Policy.id.GUID
+        FillNewRow $i 3 $Policy.Description
+        FillNewRow $i 4 $ComputerChanges
+        FillNewRow $i 5 $ComputerStatus
+        FillNewRow $i 6 $UserChanges
+        FillNewRow $i 7 $UserStatus
+        if ($LinksFound) { 
+            $j = 8
+            ForEach ($Link in $LinksFound) {
+                FillNewRow $i $j $Link.SOMPath
+                $j++
+            }
+        }
+        $i++
     }
- 
-    $unlinkedGPOs | Select DisplayName,ID | export-csv $AnalysisTempDir\UnlinkedGPO.csv
-    $noUserConfigs| Select DisplayName,ID | export-csv $AnalysisTempDir\NoUserConfigs.csv
-    $NoComputerConfigs | Select DisplayName,ID | export-csv $AnalysisTempDir\NoComputerConfigs.csv
-    $AllGPOs | Select Displayname, Description, GPOstatus, CreationTime, ModificationTime, WMIfilter, Owner | export-csv $AnalysisTempDir\AllGPOs.csv
-
-# User Reporting
-Write-host "Analysing user accounts..."
-
-$DisabledUsers = @()
-$NonExpiringUsers = @()
-$NinetyDayUsers = @()
-$PasswordNotRequired = @()
-$NeverUsedAccounts = @()
-$StalePasswords = @()
-
-get-aduser -server $DomainControllerADWS -f * -properties Name, PasswordNeverExpires, PasswordNotRequired, Lastlogontimestamp, Enabled, PwdLastSet | foreach ($_) { 
-    $Identity = $_
-    If ($_.Enabled -eq $false) { $DisabledUsers += $_ }
-    If ($_.PasswordNeverExpires) { $NoNExpiringUsers += $_ }
-    If ($_.LastLogontimestamp -lt $90Days) { $NinetyDayUsers += $_ }
-	If ($_.PasswordNotRequired) { $PasswordNotRequired += $_ }
-    if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedAccounts+= $_}
-    If ($_.pwdlastset -lt $90Days) { $StalePasswords += $_ }   
 }
 
-$DisabledUsers| Select Name | export-csv $AnalysisTempDir\DisabledUsers.csv    
-$NonExpiringUsers| Select Name | export-csv $AnalysisTempDir\NonExpiringUsers.csv    
-$NinetyDayUsers| Select Name | export-csv $AnalysisTempDir\NinetyDayUsers.csv    
-$PasswordNotRequired| Select Name | export-csv $AnalysisTempDir\PasswordNotRequired.csv    
-$NeverUsedAccounts | Select Name | export-csv $AnalysisTempDir\NeverUsedAccounts.csv
-$StalePasswords | Select Name | export-csv $AnalysisTempDir\Stalepasswords.csv
+#Create and config sheets 
+#Disabled user identities
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'DisabledUsers' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Description' 
+BuildHeaders $uregwksht 3 'WhenChanged'
+BuildHeaders $uregwksht 4 'PwdLastSet'
+$DisabledIndex = 2
 
-# Group analysis
-Write-host "Analyzing groups..."
+#No Password Expiry User Identities
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'No Password Expiry' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Description' 
+BuildHeaders $uregwksht 3 'WhenChanged'
+BuildHeaders $uregwksht 4 'PwdLastSet'
+$UnexpiringIndex = 2
 
-$AllGroups = @()
-$EmptyGroups = @()
-$NestedGroups = @()
-$MailEnabledGroups =  @()
+#Over ninety days since user identity logged on
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Aged Users' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Description' 
+BuildHeaders $uregwksht 3 'LastLogonTimestamp'
+$AgedUsersIndex = 2
 
-get-adgroup -f * -Properties Name,GroupCategory,GroupScope,Description,member,mail,ManagedBy,memberOf | Foreach ($_) {
-    if ($_.mail) {$MailEnabledGroups += $_}
-    if ($_.member.count -eq "0") {$EmptyGroups += $_}
-    if ($_.MemberOf) {$NestedGroups += $_}
-    $AllGroups += $_
-}
+#Password not required for user identity
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'No Password Required' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Description' 
+$NoPasswordIndex = 2
 
-$MailEnabledGroups | Select Name,GroupCategory,GroupScope,Description,Mail | export-csv $AnalysisTempDir\MailEnabledGroups.csv
-$EmptyGroups | Select Name,GroupCategory,GroupScope,Description| export-csv $AnalysisTempDir\EmptyGroups.csv
-$NestedGroups| Select Name,GroupCategory,GroupScope,Description,@{l='MemberOf'; e= { ( $_.memberof | % { (Get-ADObject $_).Name }) -join "," }} | export-csv $AnalysisTempDir\NestedGroups.csv -notypeinformation
-$AllGroups | Select Name,GroupCategory,GroupScope,Description,mail,ManagedBy,@{l='MemberOf'; e= { ( $_.member | % { (Get-ADObject $_).Name }) -join "," }} | export-csv $AnalysisTempDir\AllGroups.csv -notypeinformation
+#Never used user identity
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Never Used User' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Description' 
+$NeverLoggedOnUserIndex = 2
 
-#Get all privilege group members
-GetGroupMembers("Domain Admins")
-GetGroupMembers("Enterprise Admins")
-GetGroupMembers("Schema Admins")
+#Stale Password User Identities
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Stale Password' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Description' 
+BuildHeaders $uregwksht 3 'PwdLastSet'
+$StaleUserPasswordIndex = 2
 
-# Poll for all DHCP Servers
-Write-host "Enumerating DHCP servers..."
+#Domain Admins
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Domain Admins' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+$DomainAdminsIndex = 2
 
-$ConfigurationSearchBase = "cn=configuration,$RootDN"
+#Enterprise Admins
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Enterprise Admins' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+$EnterpriseAdminsIndex = 2
 
-$DHCPServers = @()
+#Schema Admins
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Schema Admins' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+$SchemaAdminsIndex = 2
 
-#$ConfigurationSearchBase = "cn=configuration,$RootDN" #direct link into ADSI
-Get-ADObject -SearchBase $ConfigurationSearchBase -Filter "objectclass -eq 'dhcpclass' -AND Name -ne 'dhcproot'" -properties Name | foreach ($_) {
-	$DHCPServers += $_
-}
-
-$DHCPServers | select Name | export-csv $AnalysisTempDir\DHCPServers.csv
-
-# PKI servers
-Write-host "Enumerating PKI..."
-
-$CertificateAuthorities = @()
-
-Get-ADObject -SearchBase $ConfigurationSearchBase  -Filter "objectclass -eq 'certificationAuthority' " -properties Name | foreach ($_) {
-	$CertificateAuthorities += $_
-}
-
-$CertificateAuthorities | select Name | export-csv $AnalysisTempDir\CertificateAuthorities.csv
-
-# Pull all system OS from AD
-Write-host "Analyzing computer objects..."
-
-#Workstations
-$WindowsXP = @()
-$Windows8 = @()
-$Windows7 = @()
-$Windows10 = @()
-#Server
-$Windows2000 = @()
-$Windows2003 = @()
-$Windows2008 = @()
-$Windows2012 = @()
-$Windows2016 = @()
-$Windows2019 = @()
-#Miscellaneous
-$UnknownOS = @()
-
-# For disabled, unused, and missing systems
-
-$DisabledComputers = @()
-$NinetyDayComputers = @()
-$NeverUsedComputers = @()
-
-Get-ADComputer -f * -properties Name,OperatingSystem,LastLogon,WhenCreated,OperatingSystemVersion,lastlogontimestamp| foreach ($_) {
-    switch ($_) {
-        {$PSItem.OperatingSystem -like 'Windows Server 2019*'} {$Windows2019 += $_;continue} 
-        {$PSItem.OperatingSystem -like 'Windows Server 2016*'} {$Windows2016 += $_;continue} 
-        {$PSItem.OperatingSystem -like 'Windows Server 2012*'} {$Windows2012 += $_;continue}
-        {$PSItem.OperatingSystem -like 'Windows Server 2008*'} {$Windows2008 += $_;continue}
-        {$PSItem.OperatingSystem -like 'Windows Server 2003*'} {$Windows2003 += $_;continue}
-        {$PSItem.OperatingSystem  -like 'Windows 2000 Server*'} {$Windows2000 += $_;continue}
-        {$PSItem.OperatingSystem -like 'Windows 7*'} {$Windows7 += $_;continue}
-        {$PSItem.OperatingSystem -like 'Windows 8*'} {$Windows8 += $_;continue}
-        {$PSItem.OperatingSystem  -like 'Windows 10*'} {$Windows10 += $_;continue}
-        {$PSItem.OperatingSystem  -like 'Windows XP*'} {$WindowsXP += $_;continue}
-        default {$UnknownOS += $_}
+Write-Host "Enumerating User identity issues..."
+$AllUserAccounts = get-aduser -server $DomainControllerADWS -f * -properties Name, Description, PasswordNeverExpires, PasswordNotRequired, Lastlogontimestamp, Enabled, PwdLastSet, WhenChanged, MemberOf
+ForEach ($UserName in $AllUserAccounts) {
+        If ($UserName.Enabled -eq $false) {
+        ChangeWorksheet "DisabledUsers"
+        FillNewRow $DisabledIndex 1 $UserName.Name
+        FillNewRow $DisabledIndex 2 $UserName.Description
+        if ($null -ne $UserName.WhenChanged) {FillNewRow $DisabledIndex 3 $UserName.WhenChanged}
+        if ($null -ne $UserName.PwdLastSet) {FillNewRow $DisabledIndex 4 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd'))}
+        $DisabledIndex++
     }
-    If ($_.Enabled -eq $false) { $DisabledComputers += $_ }
-    If ($_.LastLogontimestamp -lt $90Days) { $NinetyDayComputers += $_ }
-    if (($_.lastlogontimestamp -eq $null) -and ($_.enabled -eq $true)) {$NeverUsedComputers+= $_}   
+    if ($Username.PasswordNeverExpires -eq $True) {
+        ChangeWorksheet "No Password Expiry"
+        FillNewRow $UnexpiringIndex 1 $UserName.Name
+        FillNewRow $UnexpiringIndex 2 $UserName.Description
+        if ($null -ne $UserName.WhenChanged) {FillNewRow $UnexpiringIndex 3 $UserName.WhenChanged}
+        if ($null -ne $UserName.PwdLastSet) {FillNewRow $UnexpiringIndex 4 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd'))}
+        $UnexpiringIndex++
+    }
+    if ($Username.LastLogontimestamp -lt $90Days) {
+        ChangeWorksheet "Aged Users"
+        FillNewRow $AgedUsersIndex 1 $UserName.Name
+        FillNewRow $AgedUsersIndex 2 $UserName.Description
+        FillNewRow $AgedUsersIndex 3 $UserName.LastLogonTimestamp
+        if ($null -ne $UserName.LastLogonTimestamp) {FillNewRow $AgedUsersIndex 3 ([datetime]::FromFileTimeutc($UserName.Lastlogontimestamp).ToString('yyyy-MM-dd'))}
+        $AgedUsersIndex++
+    }
+    if ($Username.PasswordNotRequired) {
+        ChangeWorksheet "No Password Required"
+        FillNewRow $NoPasswordIndex 1 $UserName.Name
+        FillNewRow $NoPasswordIndex 2 $UserName.Description
+        $NoPasswordIndex++
+    }
+    if (($null -eq $Username.lastlogontimestamp) -and ($Username.enabled -eq $true)) {
+        ChangeWorksheet "Never Used User"
+        FillNewRow $NeverLoggedOnUserIndex 1 $UserName.Name
+        FillNewRow $NeverLoggedOnUserIndex 2 $UserName.Description
+        $NeverLoggedOnUserIndex++
+    }
+    if ($Username.pwdlastset -lt $90Days) {
+        ChangeWorksheet "Stale Password"
+        FillNewRow $StaleUserPasswordIndex 1 $UserName.Name
+        FillNewRow $StaleUserPasswordIndex 2 $UserName.Description
+        if ($null -ne $UserName.PwdLastSet) {FillNewRow $UnexpiringIndex 3 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd'))}
+        $StaleUserPasswordIndex++
+    }
+    if ($UserName.Memberof -like "*Domain Admins*") {
+        ChangeWorksheet "Domain Admins"
+        FillNewRow $DomainAdminsIndex 1 $UserName.Name
+        $DomainAdminsIndex++
+    }
+    if ($UserName.Memberof -like "*Enterprise Admins*") {
+        ChangeWorksheet "Enterprise Admins"
+        FillNewRow $EnterpriseAdminsIndex 1 $UserName.Name
+        $EnterpriseAdminsIndex++
+    } 
+    if ($UserName.Memberof -like "*Schema Admins*") {
+        ChangeWorksheet "Schema Admins"
+        FillNewRow $SchemaAdminsIndex 1 $UserName.Name
+        $SchemaAdminsIndex++
+    }
 }
 
-$WindowsXP | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\WindowsXP.csv
-$Windows8 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows8.csv
-$Windows7 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows7.csv
-$Windows10 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows10.csv
-$Windows2000 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2000.csv
-$Windows2003 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2003.csv
-$Windows2008 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2008.csv
-$Windows2012 | Select Name,OperatingSystem,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2012.csv
-$Windows2016 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2016.csv
-$Windows2019 | Select Name,OperatingSystem,OperatingSystemVersion,WhenCreated,LastLogon | export-csv $AnalysisTempDir\Windows2019.csv
+# Now onto groups
+Write-host "Enumerating Group issues"
+$AllGroups = get-adgroup -f * -Properties Name,GroupCategory,GroupScope,Description,member,mail,memberOf
 
-$DisabledComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\DisabledComputers.csv
-$NinetyDayComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NinetyDayComputers.csv
-$NeverUsedComputers | Select Name, OperatingSystem, whencreated, lastlogon | export-csv $AnalysisTempDir\NeverUsedComputers.csv
+#Build Group pages
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Mail-enabled groups' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Group Category' 
+BuildHeaders $uregwksht 3 'Group Scope'
+BuildHeaders $uregwksht 4 'Description'
+BuildHeaders $uregwksht 5 'Mail Address'
+$MailEnabledGroupIndex = 2
+
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'No Group Members' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Group Category' 
+BuildHeaders $uregwksht 3 'Group Scope'
+BuildHeaders $uregwksht 4 'Description'
+$NoGroupMembersIndex = 2
+
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Nested groups' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Group Category' 
+BuildHeaders $uregwksht 3 'Group Scope'
+BuildHeaders $uregwksht 4 'Description'
+BuildHeaders $uregwksht 5 'Description'
+BuildHeaders $uregwksht 6 'Member Of'
+$NestedGroupIndex = 2
+
+Foreach ($Group in $AllGroups) {
+    if ($Group.mail) {
+        ChangeWorksheet "Mail-enabled groups"
+        FillNewRow $MailEnabledGroupIndex 1 $Group.Name
+        FillNewRow $MailEnabledGroupIndex 2 $Group.GroupCategory
+        FillNewRow $MailEnabledGroupIndex 3 $Group.GroupScope
+        FillNewRow $MailEnabledGroupIndex 4 $Group.Description
+        FillNewRow $MailEnabledGroupIndex 5 $Group.mail
+        $MailEnabledGroupIndex++
+    }
+    if ($Group.member.count -eq "0") {
+        ChangeWorksheet "No Group Members"
+        FillNewRow $NoGroupMembersIndex 1 $Group.Name
+        FillNewRow $NoGroupMembersIndex 2 $Group.GroupCategory
+        FillNewRow $NoGroupMembersIndex 3 $Group.GroupScope
+        FillNewRow $NoGroupMembersIndex 4 $Group.Description
+        $NoGroupMembersIndex++
+    }
+    If ($Group.MemberOf) {  
+        ChangeWorksheet "Nested Groups"
+        FillNewRow $NestedGroupIndex 1 $Group.name
+        FillNewRow $NestedGroupIndex 2 $Group.GroupCategory
+        FillNewRow $NestedGroupIndex 3 $Group.GroupScope    
+        FillNewRow $NestedGroupIndex 4 $Group.Description
+        FillNewRow $NestedGroupIndex 5 $Group.Description
+        $j = 6
+        ForEach ($Subgroup in $Group.MemberOf) {
+            FillNewRow $NestedGroupIndex $j $Subgroup
+            $j++
+        }
+        $NestedGroupIndex++
+    }
+}
+
+#Infrastructure
+#Build worksheets
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'DHCP Servers' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+$DhcpServersIndex = 2
+
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'PKI Servers' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+$PkiServersIndex = 2
+
+#Grab all Objects
+$AllObjects = Get-ADObject -SearchBase $ConfigurationSearchBase -f *
+
+Foreach ($ObjectFound in $AllObjects) {
+    if (($ObjectFound.objectclass -eq "dHCPClass") -and ($ObjectFound.Name -ne "DhcpRoot")) {
+        ChangeWorksheet "DHCP Servers"
+        FillNewRow $DhcpServersIndex 1 $ObjectFound.Name
+        $DhcpServersIndex++
+    }
+    if ($ObjectFound.DistinguishedName -ilike "*CN=Certification Authorities*") {
+        ChangeWorksheet "PKI Servers"
+        FillNewRow $PkiServersIndex 1 $ObjectFound.Name
+        $PkiServersIndex++
+    }
+}
+
+#Computer Systems
+#Servers listing
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Windows Servers' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'OperatingSystem'
+BuildHeaders $uregwksht 3 'OperatingSystemServicePack' 
+BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
+$WindowsServersIndex = 2
+
+#Windows workstations listing
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Windows Workstations' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'OperatingSystem'
+BuildHeaders $uregwksht 3 'OperatingSystemServicePack' 
+BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
+$WindowsWorkstationsIndex = 2
+
+#Non- Microsoft listing
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Non-Microsoft OS' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'OperatingSystem'
+BuildHeaders $uregwksht 3 'OperatingSystemServicePack' 
+BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
+$NonMicrosoftOsIndex = 2
+
+#Disabled systems
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Disabled Computers' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'OperatingSystem'
+BuildHeaders $uregwksht 3 'OperatingSystemServicePack' 
+BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
+BuildHeaders $uregwksht 5 'LastLogon'
+$DisabledComputersIndex = 2
+
+#Stale systems 
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Stale Computers' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'OperatingSystem'
+BuildHeaders $uregwksht 3 'OperatingSystemServicePack' 
+BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
+BuildHeaders $uregwksht 5 'LastLogon'
+$StaleComputersIndex = 2
+
+#poll and categorize
+$AllSystems = Get-ADComputer -f * -properties Name,OperatingSystem,LastLogon,WhenCreated,OperatingSystemServicePack,OperatingSystemVersion,lastlogontimestamp
+foreach ($SystemFound in $AllSystems) {
+    if ($SystemFound.OperatingSystem -inotlike "*Windows*") {
+        ChangeWorksheet "Non-Microsoft OS"
+        FillNewRow $NonMicrosoftOsIndex 1 $SystemFound.Name
+        FillNewRow $NonMicrosoftOsIndex 2 $SystemFound.OperatingSystem
+        FillNewRow $NonMicrosoftOsIndex 3 $SystemFound.OperatingSystemServicePack
+        FillNewRow $NonMicrosoftOsIndex 4 $SystemFound.OperatingSystemVersion
+        $NonMicrosoftOsIndex++
+    }
+    elseif (($SystemFound.OperatingSystem -ilike "*Server*") -and ($SystemFound.OperatingSystem -ilike "*Windows*")) {
+        ChangeWorksheet "Windows Servers"
+        FillNewRow $WindowsServersIndex 1 $SystemFound.Name
+        FillNewRow $WindowsServersIndex 2 $SystemFound.OperatingSystem
+        FillNewRow $WindowsServersIndex 3 $SystemFound.OperatingSystemServicePack
+        FillNewRow $WindowsServersIndex 4 $SystemFound.OperatingSystemVersion
+        $WindowsServersIndex++
+    }
+    else {
+        ChangeWorksheet "Windows Workstations"
+        FillNewRow $WindowsWorkstationsIndex 1 $SystemFound.Name
+        FillNewRow $WindowsWorkstationsIndex 2 $SystemFound.OperatingSystem
+        FillNewRow $WindowsWorkstationsIndex 3 $SystemFound.OperatingSystemServicePack
+        FillNewRow $WindowsWorkstationsIndex 4 $SystemFound.OperatingSystemVersion
+        $WindowsWorkstationsIndex++
+    }
+    if ($SystemFound.enabled -ne $True) {
+        ChangeWorksheet "Disabled Computers"
+        FillNewRow $DisabledComputersIndex 1 $SystemFound.Name
+        FillNewRow $DisabledComputersIndex 2 $SystemFound.OperatingSystem
+        FillNewRow $DisabledComputersIndex 3 $SystemFound.OperatingSystemServicePack
+        FillNewRow $DisabledComputersIndex 4 $SystemFound.OperatingSystemVersion
+        if ($null -ne $SystemFound.LastLogonTimestamp) {FillNewRow $DisabledComputersIndex 5 ([datetime]::FromFileTimeutc($SystemFound.Lastlogontimestamp).ToString('yyyy-MM-dd'))}
+        $DisabledComputersIndex++
+    }
+    if ($SystemFound.LastLogonTimestamp -lt $90Days) {
+        ChangeWorksheet "Stale Computers"
+        FillNewRow $StaleComputersIndex 1 $SystemFound.Name
+        FillNewRow $StaleComputersIndex 2 $SystemFound.OperatingSystem
+        FillNewRow $StaleComputersIndex 3 $SystemFound.OperatingSystemServicePack
+        FillNewRow $StaleComputersIndex 4 $SystemFound.OperatingSystemVersion
+        if ($null -ne $SystemFound.LastLogonTimestamp) {FillNewRow $StaleComputersIndex 5 ([datetime]::FromFileTimeutc($SystemFound.Lastlogontimestamp).ToString('yyyy-MM-dd'))}     
+        $StaleComputersIndex++
+    }
+
+}
+
+#Domain Controllers - current domain
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Domain Controllers' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'OperatingSystem'
+BuildHeaders $uregwksht 3 'IPv4Address' 
+BuildHeaders $uregwksht 4 'Enabled' 
+$DomainControllersIndex = 2
+
+$DomainControllers = Get-ADDomainController -filter * 
+ChangeWorksheet "Domain Controllers"
+foreach ($DomainController in $DomainControllers) {
+    FillNewRow $DomainControllersIndex 1 $DomainController.Name
+    FillNewRow $DomainControllersIndex 2 $DomainController.OperatingSystem
+    FillNewRow $DomainControllersIndex 3 $DomainController.IPv4Address
+    FillNewRow $DomainControllersIndex 4 $DomainController.Enabled
+    $DomainControllersIndex++
+}
+
+#Trusts 
+$uregwksht = $workbook.Worksheets.add()
+$WorksheetIndex++
+RenameWorksheet $uregwksht 'Trusts' $WorksheetIndex
+BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'Target'
+BuildHeaders $uregwksht 3 'Direction'
+BuildHeaders $uregwksht 4 'Type'
+BuildHeaders $uregwksht 5 'Transitive' 
+$DomainTrustsIndex = 2
+
+#poll and categorize
+$DomainTrusts = Get-ADtrust -filter * 
+ChangeWorksheet "Trusts"
+foreach ($Trust in $DomainTrusts) {
+    if ($Trust.direction -ne "incoming") {
+        ChangeWorksheet "Trusts"
+        FillNewRow $DomainTrustsIndex 1 $Trust.Name
+        FillNewRow $DomainTrustsIndex 2 $Trust.Target
+        FillNewRow $DomainTrustsIndex 3 $Trust.Direction
+        if ($trust.ForestTransitive -eq $true){
+            FillNewRow $DomainTrustsIndex 4 "Forest"
+        }
+        else {FillNewRow $DomainTrustsIndex 4 "External"}
+        FillNewRow $DomainTrustsIndex 5 $Trust.ForestTransitive
+    }
+    $DomainTrustsIndex++
+}
+#Make visible, user saves, and clean up & close
+$excel.visible
+CleanupAndClose
+exit
 
 # Inspect online system services for default accounts types
 
@@ -253,3 +527,4 @@ $NonResponsiveSystems | out-file $AnalysisTempDir\NonResponsiveLocalServiceSyste
 
 # Finally, open the folder created waaaaay back in the beginning
 invoke-item $AnalysisTempDir
+
