@@ -5,10 +5,19 @@
 # Version 2.0 - 20201216
 # Revision  
 
+# USAGE
+# .\Interrogator.ps1 [-ShowMagic] [-InspectServiceAccounts]
+
 # KNOWN BUGS
 #   Creating new worksheets within a function doesn't work.
 
-#Import all the needed modules
+# Parameters
+param (
+    [switch]$ShowMagic = $false,
+    [switch]$InspectServiceAccounts = $false
+)
+
+# Import all the needed modules
 
 Import-Module -Name GroupPolicy, ActiveDirectory -ErrorAction stop
 
@@ -23,15 +32,16 @@ $UserTempDir = $env:TEMP
 $StartTimeStamp = get-date -f FileDateTime
 $AnalysisTempDir = "$UserTempDir\AnalysisReport_$StartTimeStamp" #Put a subdirectory into the TEMP folder
 $90Days = (get-date).ticks - 504988992000000000 #90 days ago, needed for stale users report
-$ValidServiceAccounts = @('localSystem','NT AUTHORITY\NetworkService','NT AUTHORITY\LocalService') # used for service detections
+$ValidServiceAccounts = @('localSystem', 'NT AUTHORITY\NetworkService', 'NT AUTHORITY\LocalService') # used for service detections
 [int]$WorksheetIndex = 1  
 
-function BuildHeaders($WorksheetVariableName, $Column, $Header){ #Writes your headers
-    $WorksheetVariableName.Cells.Item(1,$Column) = $Header
+function BuildHeaders($WorksheetVariableName, $Column, $Header) {
+    #Writes your headers
+    $WorksheetVariableName.Cells.Item(1, $Column) = $Header
 }
-function RenameWorksheet($WorksheetVariableName,$TabName) { $WorksheetVariableName.Name = $TabName}
+function RenameWorksheet($WorksheetVariableName, $TabName) { $WorksheetVariableName.Name = $TabName }
 
-function FillNewRow ($Row,$Column,$Value) { $excel.cells.item($Row,$Column) = "$Value" }
+function FillNewRow ($Row, $Column, $Value) { $excel.cells.item($Row, $Column) = "$Value" }
 
 Function CleanupAndClose {
     $excel.workbooks.close()
@@ -54,13 +64,15 @@ Add-Type -AssemblyName Microsoft.Office.Interop.Excel
 $xlFixedFormat = [Microsoft.Office.Interop.Excel.XlFileFormat]::xlWorkbookDefault
 $excel = New-Object -ComObject excel.application
 $Workbook = $excel.Workbooks.Add()
-#$excel.visible = $True # for debug only, will slow the processing markedly and cause errors
+if ($ShowMagic) {
+    $excel.visible = $True # for debug only, will slow the processing markedly and cause errors
+}
 
 #Pull all GPOs and export as XML and HTML
 
 Write-host "Dumping GPOs..."
 #This builds new worksheets - functionizing doesn't work?
-$uregwksht= $workbook.Worksheets.Item($WorksheetIndex)
+$uregwksht = $workbook.Worksheets.Item($WorksheetIndex)
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'GPOs' $WorksheetIndex
 BuildHeaders $uregwksht 1 'DisplayName'
@@ -71,7 +83,7 @@ BuildHeaders $uregwksht 5 'ComputerActive'
 BuildHeaders $uregwksht 6 'User Changes'
 BuildHeaders $uregwksht 7 'User Active'
 BuildHeaders $uregwksht 8 'LinksTo'
-$i=2
+$i = 2
 
 # mainline
 $AllGPOs = get-gpo -All 
@@ -80,8 +92,8 @@ Foreach ($Policy in $AllGPOs) {
     Get-GPOReport -Guid $Policy.id -ReportType XML | out-file -filepath $AnalysisTempDir\$ID.xml -Encoding utf8 #Did it this way because special characters in a GPO's name cause problems with writing to disk
     [XML]$GPOFile = Get-Content "$AnalysisTempDir\$ID.xml"
     foreach ($item in $GPOfile.GPO) { 
-        if ($null -eq $item.computer.ExtensionData.IsEmpty) {$ComputerChanges = $false} else {$ComputerChanges = $true}
-        if ($null -eq $item.user.ExtensionData.IsEmpty) {$UserChanges = $false} else {$UserChanges = $true}
+        if ($null -eq $item.computer.ExtensionData.IsEmpty) { $ComputerChanges = $false } else { $ComputerChanges = $true }
+        if ($null -eq $item.user.ExtensionData.IsEmpty) { $UserChanges = $false } else { $UserChanges = $true }
         $ComputerStatus = $item.computer.Enabled
         $UserStatus = $item.user.Enabled
         $LinksFound = $item.LinksTo
@@ -182,20 +194,20 @@ $SchemaAdminsIndex = 2
 Write-Host "Enumerating User identity issues..."
 $AllUserAccounts = get-aduser -server $DomainControllerADWS -f * -properties Name, Description, PasswordNeverExpires, PasswordNotRequired, Lastlogontimestamp, Enabled, PwdLastSet, WhenChanged, MemberOf
 ForEach ($UserName in $AllUserAccounts) {
-        If ($UserName.Enabled -eq $false) {
+    If ($UserName.Enabled -eq $false) {
         ChangeWorksheet "DisabledUsers"
         FillNewRow $DisabledIndex 1 $UserName.Name
         FillNewRow $DisabledIndex 2 $UserName.Description
-        if ($null -ne $UserName.WhenChanged) {FillNewRow $DisabledIndex 3 $UserName.WhenChanged}
-        if ($null -ne $UserName.PwdLastSet) {FillNewRow $DisabledIndex 4 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd'))}
+        if ($null -ne $UserName.WhenChanged) { FillNewRow $DisabledIndex 3 $UserName.WhenChanged }
+        if ($null -ne $UserName.PwdLastSet) { FillNewRow $DisabledIndex 4 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd')) }
         $DisabledIndex++
     }
     if ($Username.PasswordNeverExpires -eq $True) {
         ChangeWorksheet "No Password Expiry"
         FillNewRow $UnexpiringIndex 1 $UserName.Name
         FillNewRow $UnexpiringIndex 2 $UserName.Description
-        if ($null -ne $UserName.WhenChanged) {FillNewRow $UnexpiringIndex 3 $UserName.WhenChanged}
-        if ($null -ne $UserName.PwdLastSet) {FillNewRow $UnexpiringIndex 4 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd'))}
+        if ($null -ne $UserName.WhenChanged) { FillNewRow $UnexpiringIndex 3 $UserName.WhenChanged }
+        if ($null -ne $UserName.PwdLastSet) { FillNewRow $UnexpiringIndex 4 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd')) }
         $UnexpiringIndex++
     }
     if ($Username.LastLogontimestamp -lt $90Days) {
@@ -203,7 +215,7 @@ ForEach ($UserName in $AllUserAccounts) {
         FillNewRow $AgedUsersIndex 1 $UserName.Name
         FillNewRow $AgedUsersIndex 2 $UserName.Description
         FillNewRow $AgedUsersIndex 3 $UserName.LastLogonTimestamp
-        if ($null -ne $UserName.LastLogonTimestamp) {FillNewRow $AgedUsersIndex 3 ([datetime]::FromFileTimeutc($UserName.Lastlogontimestamp).ToString('yyyy-MM-dd'))}
+        if ($null -ne $UserName.LastLogonTimestamp) { FillNewRow $AgedUsersIndex 3 ([datetime]::FromFileTimeutc($UserName.Lastlogontimestamp).ToString('yyyy-MM-dd')) }
         $AgedUsersIndex++
     }
     if ($Username.PasswordNotRequired) {
@@ -222,7 +234,7 @@ ForEach ($UserName in $AllUserAccounts) {
         ChangeWorksheet "Stale Password"
         FillNewRow $StaleUserPasswordIndex 1 $UserName.Name
         FillNewRow $StaleUserPasswordIndex 2 $UserName.Description
-        if ($null -ne $UserName.PwdLastSet) {FillNewRow $UnexpiringIndex 3 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd'))}
+        if ($null -ne $UserName.PwdLastSet) { FillNewRow $UnexpiringIndex 3 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd')) }
         $StaleUserPasswordIndex++
     }
     if ($UserName.Memberof -like "*Domain Admins*") {
@@ -244,7 +256,7 @@ ForEach ($UserName in $AllUserAccounts) {
 
 # Now onto groups
 Write-host "Enumerating Group issues"
-$AllGroups = get-adgroup -f * -Properties Name,GroupCategory,GroupScope,Description,member,mail,memberOf
+$AllGroups = get-adgroup -f * -Properties Name, GroupCategory, GroupScope, Description, member, mail, memberOf
 
 #Build Group pages
 $uregwksht = $workbook.Worksheets.add()
@@ -395,7 +407,7 @@ BuildHeaders $uregwksht 5 'LastLogon'
 $StaleComputersIndex = 2
 
 #poll and categorize
-$AllSystems = Get-ADComputer -f * -properties Name,OperatingSystem,LastLogon,WhenCreated,OperatingSystemServicePack,OperatingSystemVersion,lastlogontimestamp
+$AllSystems = Get-ADComputer -f * -properties Name, OperatingSystem, LastLogon, WhenCreated, OperatingSystemServicePack, OperatingSystemVersion, lastlogontimestamp
 foreach ($SystemFound in $AllSystems) {
     if ($SystemFound.OperatingSystem -inotlike "*Windows*") {
         ChangeWorksheet "Non-Microsoft OS"
@@ -427,7 +439,7 @@ foreach ($SystemFound in $AllSystems) {
         FillNewRow $DisabledComputersIndex 2 $SystemFound.OperatingSystem
         FillNewRow $DisabledComputersIndex 3 $SystemFound.OperatingSystemServicePack
         FillNewRow $DisabledComputersIndex 4 $SystemFound.OperatingSystemVersion
-        if ($null -ne $SystemFound.LastLogonTimestamp) {FillNewRow $DisabledComputersIndex 5 ([datetime]::FromFileTimeutc($SystemFound.Lastlogontimestamp).ToString('yyyy-MM-dd'))}
+        if ($null -ne $SystemFound.LastLogonTimestamp) { FillNewRow $DisabledComputersIndex 5 ([datetime]::FromFileTimeutc($SystemFound.Lastlogontimestamp).ToString('yyyy-MM-dd')) }
         $DisabledComputersIndex++
     }
     if ($SystemFound.LastLogonTimestamp -lt $90Days) {
@@ -436,7 +448,7 @@ foreach ($SystemFound in $AllSystems) {
         FillNewRow $StaleComputersIndex 2 $SystemFound.OperatingSystem
         FillNewRow $StaleComputersIndex 3 $SystemFound.OperatingSystemServicePack
         FillNewRow $StaleComputersIndex 4 $SystemFound.OperatingSystemVersion
-        if ($null -ne $SystemFound.LastLogonTimestamp) {FillNewRow $StaleComputersIndex 5 ([datetime]::FromFileTimeutc($SystemFound.Lastlogontimestamp).ToString('yyyy-MM-dd'))}     
+        if ($null -ne $SystemFound.LastLogonTimestamp) { FillNewRow $StaleComputersIndex 5 ([datetime]::FromFileTimeutc($SystemFound.Lastlogontimestamp).ToString('yyyy-MM-dd')) }     
         $StaleComputersIndex++
     }
 
@@ -482,10 +494,10 @@ foreach ($Trust in $DomainTrusts) {
         FillNewRow $DomainTrustsIndex 1 $Trust.Name
         FillNewRow $DomainTrustsIndex 2 $Trust.Target
         FillNewRow $DomainTrustsIndex 3 $Trust.Direction
-        if ($trust.ForestTransitive -eq $true){
+        if ($trust.ForestTransitive -eq $true) {
             FillNewRow $DomainTrustsIndex 4 "Forest"
         }
-        else {FillNewRow $DomainTrustsIndex 4 "External"}
+        else { FillNewRow $DomainTrustsIndex 4 "External" }
         FillNewRow $DomainTrustsIndex 5 $Trust.ForestTransitive
     }
     $DomainTrustsIndex++
@@ -493,38 +505,38 @@ foreach ($Trust in $DomainTrusts) {
 #Make visible, user saves, and clean up & close
 $excel.visible
 CleanupAndClose
-exit
+
 
 # Inspect online system services for default accounts types
+if ($InspectServiceAccounts) {
+    Write-Host "Analyzing all systems in AD for service account usage, please be patient..."
 
-Write-Host "Analyzing all systems in AD for service account usage, please be patient..."
+    $NonLocalServices = @()
+    $NonResponsiveSystems = @()
 
-$NonLocalServices = @()
-$NonResponsiveSystems = @()
-
-$AllComputers = get-adcomputer -filter *
-$ValidServiceAccounts = @('localSystem','NT AUTHORITY\NetworkService','NT AUTHORITY\LocalService')
-Foreach ($system in $AllComputers) {
-    try {
-        $Services = Get-WmiObject -Class Win32_Service -ComputerName $system.name -EA Stop
-        Foreach ($Servicename in $Services) {
-            $count = 0
-            Foreach ($ValidName in $ValidServiceAccounts) {
-                if ($ServiceName.Startname -ine $ValidName) {$count++}
-                if ($count -eq 3) {
-                    $Device = $system.name, $Servicename.DisplayName, $Servicename.StartName, $Servicename.State -join ','
-                    $NonLocalServices +=  $Device
+    $AllComputers = get-adcomputer -filter *
+    $ValidServiceAccounts = @('localSystem', 'NT AUTHORITY\NetworkService', 'NT AUTHORITY\LocalService')
+    Foreach ($system in $AllComputers) {
+        try {
+            $Services = Get-WmiObject -Class Win32_Service -ComputerName $system.name -EA Stop
+            Foreach ($Servicename in $Services) {
+                $count = 0
+                Foreach ($ValidName in $ValidServiceAccounts) {
+                    if ($ServiceName.Startname -ine $ValidName) { $count++ }
+                    if ($count -eq 3) {
+                        $Device = $system.name, $Servicename.DisplayName, $Servicename.StartName, $Servicename.State -join ','
+                        $NonLocalServices += $Device
+                    }
                 }
-            }
-        }            
+            }            
+        }
+        catch { $NonResponsiveSystems += $system.Name }
     }
-    catch { $NonResponsiveSystems += $system.Name }
-}
         
-$NonLocalServices | out-file $AnalysisTempDir\NonLocalServices.csv
-$NonResponsiveSystems | out-file $AnalysisTempDir\NonResponsiveLocalServiceSystems.csv
+    $NonLocalServices | out-file $AnalysisTempDir\NonLocalServices.csv
+    $NonResponsiveSystems | out-file $AnalysisTempDir\NonResponsiveLocalServiceSystems.csv
 
 
-# Finally, open the folder created waaaaay back in the beginning
-invoke-item $AnalysisTempDir
-
+    # Finally, open the folder created waaaaay back in the beginning
+    invoke-item $AnalysisTempDir
+}
