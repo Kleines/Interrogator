@@ -11,6 +11,8 @@
 # KNOWN BUGS
 #   Creating new worksheets within a function doesn't work.
 
+# HOUSEKEEPING
+#
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUserDeclaredVarsMoreThanAssignments', '')]
 
 # Parameters
@@ -38,7 +40,7 @@ $ValidServiceAccounts = @('localSystem', 'NT AUTHORITY\NetworkService', 'NT AUTH
 [int]$WorksheetIndex = 1  
 
 function BuildHeaders($WorksheetVariableName, $Column, $Header) {
-    #Writes your headers
+    # Writes your headers
     $WorksheetVariableName.Cells.Item(1, $Column) = $Header
 }
 function RenameWorksheet($WorksheetVariableName, $TabName) { $WorksheetVariableName.Name = $TabName }
@@ -58,22 +60,22 @@ Function ChangeWorksheet ($Name) {
     $Worksheet.Activate()
 }
 
-#Prepartion for Excel build
+# Prepartion for Excel build
 mkdir $AnalysisTempDir -ea Stop -wa stop | out-null # Path to temp directory and create folder
 
-#Build Workbook
+# Build Workbook
 Add-Type -AssemblyName Microsoft.Office.Interop.Excel
 $xlFixedFormat = [Microsoft.Office.Interop.Excel.XlFileFormat]::xlWorkbookDefault
 $excel = New-Object -ComObject excel.application
 $Workbook = $excel.Workbooks.Add()
 if ($ShowMagic) {
-    $excel.visible = $True # for debug only, will slow the processing markedly and cause errors
+    $excel.visible = $True # For debug only, will slow the processing markedly and cause errors
 }
 
-#Pull all GPOs and export as XML and HTML
+# Pull all GPOs and export as XML and HTML
 
 Write-host "Dumping GPOs..."
-#This builds new worksheets - functionizing doesn't work?
+# This builds new worksheets - functionizing doesn't work?
 $uregwksht = $workbook.Worksheets.Item($WorksheetIndex)
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'GPOs' $WorksheetIndex
@@ -87,11 +89,11 @@ BuildHeaders $uregwksht 7 'User Active'
 BuildHeaders $uregwksht 8 'LinksTo'
 $i = 2
 
-# mainline
+# Mainline
 $AllGPOs = get-gpo -All 
 Foreach ($Policy in $AllGPOs) {
     $ID = $Policy.id
-    Get-GPOReport -Guid $Policy.id -ReportType XML | out-file -filepath $AnalysisTempDir\$ID.xml -Encoding utf8 #Did it this way because special characters in a GPO's name cause problems with writing to disk
+    Get-GPOReport -Guid $Policy.id -ReportType XML | out-file -filepath $AnalysisTempDir\$ID.xml -Encoding utf8 # Did it this way because special characters in a GPO's name cause problems with writing to disk
     [XML]$GPOFile = Get-Content "$AnalysisTempDir\$ID.xml"
     foreach ($item in $GPOfile.GPO) { 
         if ($null -eq $item.computer.ExtensionData.IsEmpty) { $ComputerChanges = $false } else { $ComputerChanges = $true }
@@ -117,8 +119,8 @@ Foreach ($Policy in $AllGPOs) {
     }
 }
 
-#Create and config sheets 
-#Disabled user identities
+# Create and config sheets 
+# Disabled user identities
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'DisabledUsers' $WorksheetIndex
@@ -128,7 +130,7 @@ BuildHeaders $uregwksht 3 'WhenChanged'
 BuildHeaders $uregwksht 4 'PwdLastSet'
 $DisabledIndex = 2
 
-#No Password Expiry User Identities
+# No Password Expiry User Identities
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'No Password Expiry' $WorksheetIndex
@@ -139,7 +141,7 @@ BuildHeaders $uregwksht 4 'PwdLastSet'
 BuildHeaders $uregwksht 5 'IsEnabled'
 $UnexpiringIndex = 2
 
-#Over ninety days since user identity logged on
+# Over ninety days since user identity logged on
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Aged Users' $WorksheetIndex
@@ -149,7 +151,7 @@ BuildHeaders $uregwksht 3 'LastLogonTimestamp'
 BuildHeaders $uregwksht 4 'IsEnabled'
 $AgedUsersIndex = 2
 
-#Password not required for user identity
+# Password not required for user identity
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'No Password Required' $WorksheetIndex
@@ -158,7 +160,7 @@ BuildHeaders $uregwksht 2 'IsEnabled'
 BuildHeaders $uregwksht 3 'Description' 
 $NoPasswordIndex = 2
 
-#Never used user identity
+# Never used user identity
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Never Used User' $WorksheetIndex
@@ -167,7 +169,7 @@ BuildHeaders $uregwksht 2 'IsEnabled'
 BuildHeaders $uregwksht 3 'Description' 
 $NeverLoggedOnUserIndex = 2
 
-#Stale Password User Identities
+# Stale Password User Identities
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Stale Password' $WorksheetIndex
@@ -177,7 +179,7 @@ BuildHeaders $uregwksht 3 'PwdLastSet'
 BuildHeaders $uregwksht 4 'IsEnabled'
 $StaleUserPasswordIndex = 2
 
-#Domain Admins
+# Domain Admins
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Domain Admins' $WorksheetIndex
@@ -185,7 +187,7 @@ BuildHeaders $uregwksht 1 'Name'
 BuildHeaders $uregwksht 2 'IsEnabled'
 $DomainAdminsIndex = 2
 
-#Enterprise Admins
+# Enterprise Admins
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Enterprise Admins' $WorksheetIndex
@@ -193,7 +195,7 @@ BuildHeaders $uregwksht 1 'Name'
 BuildHeaders $uregwksht 2 'IsEnabled'
 $EnterpriseAdminsIndex = 2
 
-#Schema Admins
+# Schema Admins
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Schema Admins' $WorksheetIndex
@@ -276,7 +278,7 @@ ForEach ($UserName in $AllUserAccounts) {
 Write-host "Enumerating Group issues..."
 $AllGroups = get-adgroup -f * -Properties Name, GroupCategory, GroupScope, Description, member, mail, memberOf
 
-#Build Group pages
+# Build Group pages
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Mail-enabled groups' $WorksheetIndex
@@ -341,8 +343,8 @@ Foreach ($Group in $AllGroups) {
     }
 }
 
-#Infrastructure
-#Build worksheets
+# Infrastructure
+# Build worksheets
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'DHCP Servers' $WorksheetIndex
@@ -355,7 +357,7 @@ RenameWorksheet $uregwksht 'PKI Servers' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
 $PkiServersIndex = 2
 
-#Grab all Objects
+# Grab all Objects
 $AllObjects = Get-ADObject -SearchBase $ConfigurationSearchBase -f *
 
 Foreach ($ObjectFound in $AllObjects) {
@@ -371,8 +373,8 @@ Foreach ($ObjectFound in $AllObjects) {
     }
 }
 
-#Computer Systems
-#Servers listing
+# Computer Systems
+# Servers listing
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Windows Servers' $WorksheetIndex
@@ -382,7 +384,7 @@ BuildHeaders $uregwksht 3 'OperatingSystemServicePack'
 BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
 $WindowsServersIndex = 2
 
-#Windows workstations listing
+# Windows workstations listing
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Windows Workstations' $WorksheetIndex
@@ -392,7 +394,7 @@ BuildHeaders $uregwksht 3 'OperatingSystemServicePack'
 BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
 $WindowsWorkstationsIndex = 2
 
-#Non- Microsoft listing
+# Non- Microsoft listing
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Non-Microsoft OS' $WorksheetIndex
@@ -402,7 +404,7 @@ BuildHeaders $uregwksht 3 'OperatingSystemServicePack'
 BuildHeaders $uregwksht 4 'OperatingSystemVersion' 
 $NonMicrosoftOsIndex = 2
 
-#Disabled systems
+# Disabled systems
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Disabled Computers' $WorksheetIndex
@@ -413,7 +415,7 @@ BuildHeaders $uregwksht 4 'OperatingSystemVersion'
 BuildHeaders $uregwksht 5 'LastLogon'
 $DisabledComputersIndex = 2
 
-#Stale systems 
+# Stale systems 
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Stale Computers' $WorksheetIndex
@@ -424,7 +426,7 @@ BuildHeaders $uregwksht 4 'OperatingSystemVersion'
 BuildHeaders $uregwksht 5 'LastLogon'
 $StaleComputersIndex = 2
 
-#poll and categorize
+# Poll and categorize
 $AllSystems = Get-ADComputer -f * -properties Name, OperatingSystem, LastLogon, WhenCreated, OperatingSystemServicePack, OperatingSystemVersion, lastlogontimestamp
 foreach ($SystemFound in $AllSystems) {
     if ($SystemFound.OperatingSystem -inotlike "*Windows*") {
@@ -472,7 +474,7 @@ foreach ($SystemFound in $AllSystems) {
 
 }
 
-#Domain Controllers - current domain
+# Domain Controllers - current domain
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Domain Controllers' $WorksheetIndex
@@ -492,7 +494,7 @@ foreach ($DomainController in $DomainControllers) {
     $DomainControllersIndex++
 }
 
-#Trusts 
+# Trusts 
 $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Trusts' $WorksheetIndex
@@ -503,7 +505,7 @@ BuildHeaders $uregwksht 4 'Type'
 BuildHeaders $uregwksht 5 'Transitive' 
 $DomainTrustsIndex = 2
 
-#poll and categorize
+# Poll and categorize
 $DomainTrusts = Get-ADtrust -filter * 
 ChangeWorksheet "Trusts"
 foreach ($Trust in $DomainTrusts) {
@@ -520,7 +522,7 @@ foreach ($Trust in $DomainTrusts) {
     }
     $DomainTrustsIndex++
 }
-#Make visible, user saves, and clean up & close
+# Make visible, user saves, and clean up & close
 $excel.visible
 CleanupAndClose
 
