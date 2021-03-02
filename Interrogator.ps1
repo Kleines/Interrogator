@@ -11,6 +11,8 @@
 # KNOWN BUGS
 #   Creating new worksheets within a function doesn't work.
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUserDeclaredVarsMoreThanAssignments', '')]
+
 # Parameters
 param (
     [switch]$ShowMagic = $false,
@@ -134,6 +136,7 @@ BuildHeaders $uregwksht 1 'Name'
 BuildHeaders $uregwksht 2 'Description' 
 BuildHeaders $uregwksht 3 'WhenChanged'
 BuildHeaders $uregwksht 4 'PwdLastSet'
+BuildHeaders $uregwksht 5 'IsEnabled'
 $UnexpiringIndex = 2
 
 #Over ninety days since user identity logged on
@@ -143,6 +146,7 @@ RenameWorksheet $uregwksht 'Aged Users' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
 BuildHeaders $uregwksht 2 'Description' 
 BuildHeaders $uregwksht 3 'LastLogonTimestamp'
+BuildHeaders $uregwksht 4 'IsEnabled'
 $AgedUsersIndex = 2
 
 #Password not required for user identity
@@ -150,7 +154,8 @@ $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'No Password Required' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
-BuildHeaders $uregwksht 2 'Description' 
+BuildHeaders $uregwksht 2 'IsEnabled'
+BuildHeaders $uregwksht 3 'Description' 
 $NoPasswordIndex = 2
 
 #Never used user identity
@@ -158,7 +163,8 @@ $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Never Used User' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
-BuildHeaders $uregwksht 2 'Description' 
+BuildHeaders $uregwksht 2 'IsEnabled'
+BuildHeaders $uregwksht 3 'Description' 
 $NeverLoggedOnUserIndex = 2
 
 #Stale Password User Identities
@@ -168,6 +174,7 @@ RenameWorksheet $uregwksht 'Stale Password' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
 BuildHeaders $uregwksht 2 'Description' 
 BuildHeaders $uregwksht 3 'PwdLastSet'
+BuildHeaders $uregwksht 4 'IsEnabled'
 $StaleUserPasswordIndex = 2
 
 #Domain Admins
@@ -175,6 +182,7 @@ $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Domain Admins' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'IsEnabled'
 $DomainAdminsIndex = 2
 
 #Enterprise Admins
@@ -182,6 +190,7 @@ $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Enterprise Admins' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'IsEnabled'
 $EnterpriseAdminsIndex = 2
 
 #Schema Admins
@@ -189,6 +198,7 @@ $uregwksht = $workbook.Worksheets.add()
 $WorksheetIndex++
 RenameWorksheet $uregwksht 'Schema Admins' $WorksheetIndex
 BuildHeaders $uregwksht 1 'Name'
+BuildHeaders $uregwksht 2 'IsEnabled'
 $SchemaAdminsIndex = 2
 
 Write-Host "Enumerating User identity issues..."
@@ -208,6 +218,7 @@ ForEach ($UserName in $AllUserAccounts) {
         FillNewRow $UnexpiringIndex 2 $UserName.Description
         if ($null -ne $UserName.WhenChanged) { FillNewRow $UnexpiringIndex 3 $UserName.WhenChanged }
         if ($null -ne $UserName.PwdLastSet) { FillNewRow $UnexpiringIndex 4 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd')) }
+        FillNewRow $UnexpiringIndex 5 $UserName.Enabled
         $UnexpiringIndex++
     }
     if ($Username.LastLogontimestamp -lt $90Days) {
@@ -216,18 +227,21 @@ ForEach ($UserName in $AllUserAccounts) {
         FillNewRow $AgedUsersIndex 2 $UserName.Description
         FillNewRow $AgedUsersIndex 3 $UserName.LastLogonTimestamp
         if ($null -ne $UserName.LastLogonTimestamp) { FillNewRow $AgedUsersIndex 3 ([datetime]::FromFileTimeutc($UserName.Lastlogontimestamp).ToString('yyyy-MM-dd')) }
+        FillNewRow $AgedUsersIndex 4 $UserName.Enabled
         $AgedUsersIndex++
     }
     if ($Username.PasswordNotRequired) {
         ChangeWorksheet "No Password Required"
         FillNewRow $NoPasswordIndex 1 $UserName.Name
-        FillNewRow $NoPasswordIndex 2 $UserName.Description
+        FillNewRow $NoPasswordIndex 1 $UserName.Enabled
+        FillNewRow $NoPasswordIndex 3 $UserName.Description
         $NoPasswordIndex++
     }
     if (($null -eq $Username.lastlogontimestamp) -and ($Username.enabled -eq $true)) {
         ChangeWorksheet "Never Used User"
         FillNewRow $NeverLoggedOnUserIndex 1 $UserName.Name
-        FillNewRow $NeverLoggedOnUserIndex 2 $UserName.Description
+        FillNewRow $NeverLoggedOnUserIndex 2 $UserName.Enabled
+        FillNewRow $NeverLoggedOnUserIndex 3 $UserName.Description
         $NeverLoggedOnUserIndex++
     }
     if ($Username.pwdlastset -lt $90Days) {
@@ -235,27 +249,31 @@ ForEach ($UserName in $AllUserAccounts) {
         FillNewRow $StaleUserPasswordIndex 1 $UserName.Name
         FillNewRow $StaleUserPasswordIndex 2 $UserName.Description
         if ($null -ne $UserName.PwdLastSet) { FillNewRow $UnexpiringIndex 3 ([datetime]::FromFileTimeutc($UserName.pwdlastset).ToString('yyyy-MM-dd')) }
+        FillNewRow $StaleUserPasswordIndex 4 $UserName.Enabled
         $StaleUserPasswordIndex++
     }
     if ($UserName.Memberof -like "*Domain Admins*") {
         ChangeWorksheet "Domain Admins"
         FillNewRow $DomainAdminsIndex 1 $UserName.Name
+        FillNewRow $DomainAdminsIndex 2 $UserName.Enabled
         $DomainAdminsIndex++
     }
     if ($UserName.Memberof -like "*Enterprise Admins*") {
         ChangeWorksheet "Enterprise Admins"
         FillNewRow $EnterpriseAdminsIndex 1 $UserName.Name
+        FillNewRow $EnterpriseAdminsIndex 2 $UserName.Enabled
         $EnterpriseAdminsIndex++
     } 
     if ($UserName.Memberof -like "*Schema Admins*") {
         ChangeWorksheet "Schema Admins"
         FillNewRow $SchemaAdminsIndex 1 $UserName.Name
+        FillNewRow $SchemaAdminsIndex 2 $UserName.Enabled
         $SchemaAdminsIndex++
     }
 }
 
 # Now onto groups
-Write-host "Enumerating Group issues"
+Write-host "Enumerating Group issues..."
 $AllGroups = get-adgroup -f * -Properties Name, GroupCategory, GroupScope, Description, member, mail, memberOf
 
 #Build Group pages
