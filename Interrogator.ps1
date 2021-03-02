@@ -12,8 +12,9 @@
 #   Creating new worksheets within a function doesn't work.
 
 # HOUSEKEEPING
-#
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUserDeclaredVarsMoreThanAssignments', '')]
+# The below fixes a code validation issue for powershell in VSCode https://github.com/PowerShell/PSScriptAnalyzer/issues/827
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseDeclaredVarsMoreThanAssignments", "")]
+Param()
 
 # Parameters
 param (
