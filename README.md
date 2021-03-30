@@ -3,7 +3,7 @@ This is the development of a powershell script to perform analysis of an Active 
 
 Upon completion it opens the temporary folder location for your inspection.
 
-At this time (20191113) it inspects and outputs as CSV files all of the following:
+At this time (20210330) it inspects and outputs a single XLSX file all of the following:
 
 GPOs
 
@@ -61,5 +61,5 @@ OPERATING SYSTEMS
 SERVICES
 
     All services on all systems NOT using localSystem, NT AUTHORITY\NetworkService or NT AUTHORITY\LocalService a credentials
-    Separate ttab non-responsive systems (offline, WMI issues, etc.) for this function as well
+    Separate tab non-responsive systems (offline, WMI issues, etc.) for this function as well
     NOTE: This piece has been commented out as it's dog-slow.
